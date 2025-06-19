@@ -13,7 +13,7 @@ pub struct State {
     device: wgpu::Device,                   // Queue to device
     queue: wgpu::Queue,                     // Push commands to queue
     config: wgpu::SurfaceConfiguration,     // Configure surface
-    is_surface_configured: bool,
+    is_surface_configured: bool,            // For checking if surface is configured when rendering
     window: Arc<Window>,
 }
 
@@ -96,8 +96,13 @@ impl State {
         })
     }
 
-    pub fn resize(&mut self, _width: u32, _height: u32) {
-
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width > 0 && height > 0 {
+            self.config.width = width;
+            self.config.height = height;
+            self.surface.configure(&self.device, &self.config);
+            self.is_surface_configured = true;
+        }
     }
 
     pub fn render(&mut self) {
