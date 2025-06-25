@@ -14,6 +14,7 @@ pub struct State {
     queue: wgpu::Queue,                     // Push commands to queue
     config: wgpu::SurfaceConfiguration,     // Configure surface
     is_surface_configured: bool,            // For checking if surface is configured when rendering
+    render_pipeline: wgpu::RenderPipeline,
     window: Arc<Window>,
 }
 
@@ -86,12 +87,61 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
+        // Load in vertex and fragment shaders
+        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+
+        // For the render_pipeline
+        let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Render Pipeline Layout"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[],
+        });
+
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,                      // Use the surface config format, copy color outputs to surface
+                    blend: Some(wgpu::BlendState::REPLACE),     // Replace old pixel data with new data
+                    write_mask: wgpu::ColorWrites::ALL,         // Write to all colors
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,    // Specify triangles individually (every 3 vertices, may replace with triangle strip)
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),                  // Backface culling
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,                                    // TODO: use depth_stencil
+            multisample: wgpu::MultisampleState {                   // For anti-aliasing (current configuration = no anti-aliasing)
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         Ok(Self {
             surface,
             device,
             queue,
             config,
             is_surface_configured: false,
+            render_pipeline,
             window,
         })
     }
