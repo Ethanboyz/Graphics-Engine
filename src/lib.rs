@@ -18,6 +18,13 @@ pub struct State {
     window: Arc<Window>,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+struct Vertex {
+    position: [f32; 3],     // x, y, z position coordinates
+    color: [f32; 3],        // rgb color values
+}
+
 impl State {
     async fn new(window: Arc<Window>) -> anyhow::Result<State> {
         let size = window.inner_size();
