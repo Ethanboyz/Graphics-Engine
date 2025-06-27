@@ -2,7 +2,11 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use winit::{
-    application::ApplicationHandler, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
+    application::ApplicationHandler,
+    event::*,
+    event_loop::{ActiveEventLoop, EventLoop},
+    keyboard::{KeyCode, PhysicalKey},
+    window::Window,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -11,8 +15,8 @@ use wasm_bindgen::prelude::*;
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
-    position: [f32; 3],     // x, y, z position coordinates
-    color: [f32; 3],        // rgb color values
+    position: [f32; 3], // x, y, z position coordinates
+    color: [f32; 3],    // rgb color values
 }
 
 impl Vertex {
@@ -30,29 +34,51 @@ impl Vertex {
                     offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     shader_location: 1,
                     format: wgpu::VertexFormat::Float32x3,
-                }
-            ]
+                },
+            ],
         }
     }
 }
 
-// Test triangle (vertices in ccw order)
+// Test pentagon (with index buffer)
 const VERTICES: &[Vertex] = &[
-    Vertex { position: [0.0, 0.5, 0.0], color: [1.0, 0.0, 0.0] },
-    Vertex { position: [-0.5, -0.5, 0.0], color: [0.0, 1.0, 0.0] },
-    Vertex { position: [0.5, -0.5, 0.0], color: [0.0, 0.0, 1.0] },
+    Vertex {
+        position: [-0.0868241, 0.49240386, 0.0],
+        color: [0.5, 0.0, 0.5],
+    },
+    Vertex {
+        position: [-0.49513406, 0.06958647, 0.0],
+        color: [0.5, 0.0, 0.5],
+    },
+    Vertex {
+        position: [-0.21918549, -0.44939706, 0.0],
+        color: [0.5, 0.0, 0.5],
+    },
+    Vertex {
+        position: [0.35966998, -0.3473291, 0.0],
+        color: [0.5, 0.0, 0.5],
+    },
+    Vertex {
+        position: [0.44147372, 0.2347359, 0.0],
+        color: [0.5, 0.0, 0.5],
+    },
 ];
+
+// Index buffer (triangles in ccw order)
+const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
 
 // Where game state is stored
 pub struct State {
-    surface: wgpu::Surface<'static>,        // Draw to surface
-    device: wgpu::Device,                   // Queue to device
-    queue: wgpu::Queue,                     // Push commands to queue
-    config: wgpu::SurfaceConfiguration,     // Configure surface
-    is_surface_configured: bool,            // For checking if surface is configured when rendering
-    render_pipeline: wgpu::RenderPipeline,  // Render pipeline
-    vertex_buffer: wgpu::Buffer,            // Vertex buffer
-    num_vertices: u32,                      // Number of vertices
+    surface: wgpu::Surface<'static>,       // Draw to surface
+    device: wgpu::Device,                  // Queue to device
+    queue: wgpu::Queue,                    // Push commands to queue
+    config: wgpu::SurfaceConfiguration,    // Configure surface
+    is_surface_configured: bool,           // For checking if surface is configured when rendering
+    render_pipeline: wgpu::RenderPipeline, // Render pipeline
+    vertex_buffer: wgpu::Buffer,           // For the vertex buffer
+    num_vertices: u32,
+    index_buffer: wgpu::Buffer, // For the index buffer
+    num_indices: u32,
     window: Arc<Window>,
 }
 
@@ -70,7 +96,6 @@ impl State {
             ..Default::default()
         });
 
-        // 
         let surface = instance.create_surface(window.clone()).unwrap();
 
         // Iterate and choose a working adapter for the surface
@@ -108,8 +133,10 @@ impl State {
             .await?;
 
         let surface_caps = surface.get_capabilities(&adapter);
-                
-        let surface_format = surface_caps.formats.iter()
+
+        let surface_format = surface_caps
+            .formats
+            .iter()
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
@@ -129,11 +156,12 @@ impl State {
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
         // For the render_pipeline
-        let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[],
-            push_constant_ranges: &[],
-        });
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
@@ -141,30 +169,31 @@ impl State {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],                     // Include vertex buffer in pipeline
+                buffers: &[Vertex::desc()], // Include vertex buffer in pipeline
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,                      // Use the surface config format, copy color outputs to surface
-                    blend: Some(wgpu::BlendState::REPLACE),     // Replace old pixel data with new data
-                    write_mask: wgpu::ColorWrites::ALL,         // Write to all colors
+                    format: config.format, // Use the surface config format, copy color outputs to surface
+                    blend: Some(wgpu::BlendState::REPLACE), // Replace old pixel data with new data
+                    write_mask: wgpu::ColorWrites::ALL, // Write to all colors
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,    // Specify triangles individually (every 3 vertices, may replace with triangle strip)
+                topology: wgpu::PrimitiveTopology::TriangleList, // Specify triangles individually (every 3 vertices, may replace with triangle strip)
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),                  // Backface culling
+                cull_mode: Some(wgpu::Face::Back), // Backface culling
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
             },
-            depth_stencil: None,                                    // TODO: use depth_stencil
-            multisample: wgpu::MultisampleState {                   // For anti-aliasing (current configuration = no anti-aliasing)
+            depth_stencil: None, // TODO: use depth_stencil
+            multisample: wgpu::MultisampleState {
+                // For anti-aliasing (current configuration = no anti-aliasing)
                 count: 1,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
@@ -173,13 +202,18 @@ impl State {
             cache: None,
         });
 
-        let vertex_buffer = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(VERTICES),
-                usage: wgpu::BufferUsages::VERTEX,
-            }
-        );
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(VERTICES),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer"),
+            contents: bytemuck::cast_slice(INDICES),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let num_indices = INDICES.len() as u32;
 
         let num_vertices = VERTICES.len() as u32;
 
@@ -192,6 +226,8 @@ impl State {
             render_pipeline,
             vertex_buffer,
             num_vertices,
+            index_buffer,
+            num_indices,
             window,
         })
     }
@@ -224,14 +260,18 @@ impl State {
         if !self.is_surface_configured {
             return Ok(());
         }
-            
+
         let output = self.surface.get_current_texture()?;
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         // To create the commands to enqueue, and draw via creating a RenderPass
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -256,7 +296,8 @@ impl State {
             });
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(0..self.num_vertices, 0..1);               // Draw num_vertices (one instance)
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1); // Draw using num_indices vertices
         }
 
         // Submit state queue to GPU
@@ -264,7 +305,6 @@ impl State {
         output.present();
 
         Ok(())
-        
     }
 }
 
@@ -320,13 +360,15 @@ impl ApplicationHandler<State> for App {
             // Run the future asynchronously and use the proxy to send the results to the event loop
             if let Some(proxy) = self.proxy.take() {
                 wasm_bindgen_futures::spawn_local(async move {
-                    assert!(proxy
-                        .send_event(
-                            State::new(window)
-                                .await
-                                .expect("Unable to create canvas!!!")
-                        )
-                        .is_ok())
+                    assert!(
+                        proxy
+                            .send_event(
+                                State::new(window)
+                                    .await
+                                    .expect("Unable to create canvas!!!")
+                            )
+                            .is_ok()
+                    )
                 });
             }
         }
@@ -348,7 +390,12 @@ impl ApplicationHandler<State> for App {
     }
 
     // Process events
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: winit::window::WindowId, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
         let state = match &mut self.state {
             Some(canvas) => canvas,
             None => return,
