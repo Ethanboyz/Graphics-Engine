@@ -75,11 +75,15 @@ pub struct State {
     config: wgpu::SurfaceConfiguration,    // Configure surface
     is_surface_configured: bool,           // For checking if surface is configured when rendering
     render_pipeline: wgpu::RenderPipeline, // Render pipeline
-    vertex_buffer: wgpu::Buffer,           // For the vertex buffer
-    num_vertices: u32,
-    index_buffer: wgpu::Buffer, // For the index buffer
-    num_indices: u32,
     window: Arc<Window>,
+
+    // For the vertex buffer
+    vertex_buffer: wgpu::Buffer,
+    num_vertices: u32,
+
+    // For the index buffer
+    index_buffer: wgpu::Buffer,
+    num_indices: u32,
 }
 
 impl State {
@@ -224,11 +228,11 @@ impl State {
             config,
             is_surface_configured: false,
             render_pipeline,
+            window,
             vertex_buffer,
             num_vertices,
             index_buffer,
             num_indices,
-            window,
         })
     }
 
