@@ -114,6 +114,80 @@ impl CameraUniform {
     }
 }
 
+// For moving the camera around
+struct CameraController {
+    speed: f32,
+    is_forward_pressed: bool,
+    is_backward_pressed: bool,
+    is_left_pressed: bool,
+    is_right_pressed: bool,
+}
+
+impl CameraController {
+    fn new(speed: f32) -> Self {
+        Self {
+            speed,
+            is_forward_pressed: false,
+            is_backward_pressed: false,
+            is_left_pressed: false,
+            is_right_pressed: false,
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyCode, is_pressed: bool) -> bool {
+        match key {
+            KeyCode::KeyW | KeyCode::ArrowUp => {
+                self.is_forward_pressed = is_pressed;
+                true
+            }
+            KeyCode::KeyA | KeyCode::ArrowLeft => {
+                self.is_left_pressed = is_pressed;
+                true
+            }
+            KeyCode::KeyS | KeyCode::ArrowDown => {
+                self.is_backward_pressed = is_pressed;
+                true
+            }
+            KeyCode::KeyD | KeyCode::ArrowRight => {
+                self.is_right_pressed = is_pressed;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn update_camera(&self, camera: &mut Camera) {
+        use cgmath::InnerSpace;
+        let forward = camera.target - camera.eye;
+        let forward_norm = forward.normalize();
+        let forward_mag = forward.magnitude();
+
+        // Prevents glitching when the camera gets too close to the center of the scene.
+        if self.is_forward_pressed && forward_mag > self.speed {
+            camera.eye += forward_norm * self.speed;
+        }
+        if self.is_backward_pressed {
+            camera.eye -= forward_norm * self.speed;
+        }
+
+        let right = forward_norm.cross(camera.up);
+
+        // Redo radius calc in case the forward/backward is pressed.
+        let forward = camera.target - camera.eye;
+        let forward_mag = forward.magnitude();
+
+        if self.is_right_pressed {
+            // Rescale the distance between the target and the eye so
+            // that it doesn't change. The eye, therefore, still
+            // lies on the circle made by the target and eye.
+            camera.eye = camera.target - (forward + right * self.speed).normalize() * forward_mag;
+        }
+        if self.is_left_pressed {
+            camera.eye = camera.target - (forward - right * self.speed).normalize() * forward_mag;
+        }
+    }
+}
+
 // Where game state is stored
 pub struct State {
     surface: wgpu::Surface<'static>,    // Draw to surface
@@ -125,12 +199,12 @@ pub struct State {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    camera_controller: CameraController,
     render_pipeline: wgpu::RenderPipeline,
     window: Arc<Window>,
 
     // For the vertex buffer
     vertex_buffer: wgpu::Buffer,
-    num_vertices: u32,
 
     // For the index buffer
     index_buffer: wgpu::Buffer,
@@ -138,6 +212,7 @@ pub struct State {
 
     // For handling textures
     diffuse_bind_group: wgpu::BindGroup,
+    #[allow(dead_code)]
     diffuse_texture: texture::Texture,
 }
 
@@ -300,6 +375,8 @@ impl State {
             label: Some("camera_bind_group"),
         });
 
+        let camera_controller = CameraController::new(0.2);
+
         // Load in vertex and fragment shaders
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
@@ -375,10 +452,10 @@ impl State {
             camera_uniform,
             camera_buffer,
             camera_bind_group,
+            camera_controller,
             render_pipeline,
             window,
             vertex_buffer,
-            num_vertices,
             index_buffer,
             num_indices,
             diffuse_bind_group,
@@ -396,15 +473,18 @@ impl State {
     }
 
     // Handle keyboard events
-    fn handle_key(&self, event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
-        match (code, is_pressed) {
-            (KeyCode::Escape, true) => event_loop.exit(),
-            _ => {}
+    fn handle_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
+        if code == KeyCode::Escape && is_pressed {
+            event_loop.exit();
+        } else {
+            self.camera_controller.handle_key(code, is_pressed);
         }
     }
 
     fn update(&mut self) {
-        todo!();
+        self.camera_controller.update_camera(&mut self.camera);
+        self.camera_uniform.update_view_proj(&self.camera);
+        self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -561,6 +641,7 @@ impl ApplicationHandler<State> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
+                state.update();
                 match state.render() {
                     Ok(_) => {}
                     // Reconfigure surface if lost or outdated, resize accordingly
