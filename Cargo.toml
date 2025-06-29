@@ -12,12 +12,13 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0"
-winit = { version = "0.30" }
+winit = { version = "0.30" } # Window management
 env_logger = "0.10"
 log = "0.4"
 wgpu = "25.0"
 pollster = "0.3"
-bytemuck = { version = "1.16", features = [ "derive" ] }
+bytemuck = { version = "1.16", features = [ "derive" ] } # Casting between plain data types (good for structures -> buffers)
+cgmath = "0.18" # Linear algebra
 
 [dependencies.image]
 version = "0.24"
