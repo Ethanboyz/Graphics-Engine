@@ -1,4 +1,8 @@
+mod model;
+mod resources;
 mod texture;
+
+use model::Vertex;
 
 use cgmath::prelude::*;
 use std::sync::Arc;
@@ -14,34 +18,6 @@ use winit::{
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 3],   // x, y, z position coordinates
-    tex_coords: [f32; 2], // Passed to the texture sampler
-}
-
-impl Vertex {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-            ],
-        }
-    }
-}
 
 struct Instance {
     position: cgmath::Vector3<f32>,
@@ -100,33 +76,6 @@ impl InstanceRaw {
         }
     }
 }
-
-// Test pentagon (with index buffer)
-const VERTICES: &[Vertex] = &[
-    Vertex {
-        position: [-0.0868241, 0.49240386, 0.0],
-        tex_coords: [0.4131759, 1.0 - 0.99240386],
-    },
-    Vertex {
-        position: [-0.49513406, 0.06958647, 0.0],
-        tex_coords: [0.0048659444, 1.0 - 0.56958647],
-    },
-    Vertex {
-        position: [-0.21918549, -0.44939706, 0.0],
-        tex_coords: [0.28081453, 1.0 - 0.05060294],
-    },
-    Vertex {
-        position: [0.35966998, -0.3473291, 0.0],
-        tex_coords: [0.85967, 1.0 - 0.1526709],
-    },
-    Vertex {
-        position: [0.44147372, 0.2347359, 0.0],
-        tex_coords: [0.9414737, 1.0 - 0.7347359],
-    },
-];
-
-// Index buffer (triangles in ccw order)
-const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
 
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::from_cols(
     cgmath::Vector4::new(1.0, 0.0, 0.0, 0.0),
@@ -262,14 +211,8 @@ pub struct State {
     camera_controller: CameraController,
     depth_texture: Texture,
     render_pipeline: wgpu::RenderPipeline,
+    obj_model: model::Model,
     window: Arc<Window>,
-
-    // For the vertex buffer
-    vertex_buffer: wgpu::Buffer,
-
-    // For the index buffer
-    index_buffer: wgpu::Buffer,
-    num_indices: u32,
 
     // For the instance buffer
     instances: Vec<Instance>,
@@ -448,6 +391,12 @@ impl State {
         // Load in vertex and fragment shaders
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
+        // Load in the cube model from file
+        let obj_model =
+            resources::load_model("cube.obj", &device, &queue, &texture_bind_group_layout)
+                .await
+                .unwrap();
+
         // For the render_pipeline
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -462,7 +411,7 @@ impl State {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc(), InstanceRaw::desc()], // Include vertex and instance buffers in pipeline
+                buffers: &[model::ModelVertex::desc(), InstanceRaw::desc()], // Include vertex and instance buffers in pipeline
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -501,50 +450,27 @@ impl State {
             cache: None,
         });
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(INDICES),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        let num_indices = INDICES.len() as u32;
-
         // For the instance buffer
         const NUM_INSTANCES_PER_ROW: u32 = 10; // Instances in 10 rows of 10 spaced evenly apart in grid formation
-        const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(
-            NUM_INSTANCES_PER_ROW as f32 * 0.5,
-            0.0,
-            NUM_INSTANCES_PER_ROW as f32 * 0.5,
-        );
+        const SPACE_BETWEEN: f32 = 3.0;
+        let instances = (0..NUM_INSTANCES_PER_ROW).flat_map(|z| {
+            (0..NUM_INSTANCES_PER_ROW).map(move |x| {
+                let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+                let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
 
-        let instances = (0..NUM_INSTANCES_PER_ROW)
-            .flat_map(|z| {
-                (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                    let position = cgmath::Vector3 {
-                        x: x as f32,
-                        y: 0.0,
-                        z: z as f32,
-                    } - INSTANCE_DISPLACEMENT;
+                let position = cgmath::Vector3 { x, y: 0.0, z };
 
-                    // So objects at (0, 0, 0) won't get scaled to zero as Quaternions can affect scale if created improperly
-                    let rotation = if position.is_zero() {
-                        cgmath::Quaternion::from_axis_angle(
-                            cgmath::Vector3::unit_z(),
-                            cgmath::Deg(0.0),
-                        )
-                    } else {
-                        cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
-                    };
+                let rotation = if position.is_zero() {
+                    cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), cgmath::Deg(0.0))
+                } else {
+                    cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
+                };
 
-                    Instance { position, rotation }
-                })
+                Instance {
+                    position, rotation,
+                }
             })
-            .collect::<Vec<_>>();
+        }).collect::<Vec<_>>();
         let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
@@ -565,10 +491,8 @@ impl State {
             camera_controller,
             depth_texture,
             render_pipeline,
+            obj_model,
             window,
-            vertex_buffer,
-            index_buffer,
-            num_indices,
             instances,
             instance_buffer,
             diffuse_bind_group,
@@ -657,10 +581,11 @@ impl State {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]); // Texture bind group
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]); // Camera bind group
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.instances.len() as _); // Draw using num_indices vertices
+
+            use model::DrawModel;
+            render_pass
+                .draw_mesh_instanced(&self.obj_model.meshes[0], 0..self.instances.len() as u32);
         }
 
         // Submit state queue to GPU
