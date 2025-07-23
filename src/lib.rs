@@ -453,24 +453,27 @@ impl State {
         // For the instance buffer
         const NUM_INSTANCES_PER_ROW: u32 = 10; // Instances in 10 rows of 10 spaced evenly apart in grid formation
         const SPACE_BETWEEN: f32 = 3.0;
-        let instances = (0..NUM_INSTANCES_PER_ROW).flat_map(|z| {
-            (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
-                let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+        let instances = (0..NUM_INSTANCES_PER_ROW)
+            .flat_map(|z| {
+                (0..NUM_INSTANCES_PER_ROW).map(move |x| {
+                    let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+                    let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
 
-                let position = cgmath::Vector3 { x, y: 0.0, z };
+                    let position = cgmath::Vector3 { x, y: 0.0, z };
 
-                let rotation = if position.is_zero() {
-                    cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), cgmath::Deg(0.0))
-                } else {
-                    cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
-                };
+                    let rotation = if position.is_zero() {
+                        cgmath::Quaternion::from_axis_angle(
+                            cgmath::Vector3::unit_z(),
+                            cgmath::Deg(0.0),
+                        )
+                    } else {
+                        cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
+                    };
 
-                Instance {
-                    position, rotation,
-                }
+                    Instance { position, rotation }
+                })
             })
-        }).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
         let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
@@ -578,14 +581,15 @@ impl State {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]); // Texture bind group
-            render_pass.set_bind_group(1, &self.camera_bind_group, &[]); // Camera bind group
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
 
-            use model::DrawModel;
-            render_pass
-                .draw_mesh_instanced(&self.obj_model.meshes[0], 0..self.instances.len() as u32);
+            render_pass.set_pipeline(&self.render_pipeline);
+
+            let mesh = &self.obj_model.meshes[0];
+            let material = &self.obj_model.materials[mesh.material];
+            use crate::model::DrawModel;
+            render_pass.draw_mesh_instanced(mesh, material, 0..self.instances.len() as u32, &self.camera_bind_group);
+
         }
 
         // Submit state queue to GPU
